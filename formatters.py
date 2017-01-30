@@ -76,8 +76,8 @@ def gen_vlab ( rosters ) :
             f.write('dsadd user "CN='+login['given']+' '+login['family']+',OU='+ou+',DC=cislab,DC=net"'+\
                     ' -samid ' + login['login'] +\
                     ' -upn ' + login['login'] + '@cislab.net' +\
-                    ' -fn ' + login['given'] +\
-                    ' -ln ' + login['family'] +\
+                    ' -fn "' + login['given'] + '"' +\
+                    ' -ln "' + login['family'] + '"' +\
                     ' -pwd ' + login['password'] +\
                     ' -desc "' + unixclass + ' student"' +\
                     ' -memberof "CN='+unixclass+',CN=users,DC=cislab,DC=net"' +\
