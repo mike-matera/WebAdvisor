@@ -5,11 +5,13 @@ import time
 import json
 import re
 import argparse
+import hashlib
 
 parser = argparse.ArgumentParser()
-parser.add_argument('command', nargs=1, choices=['update', 'delete', 'reset'])
+parser.add_argument('command', nargs=1, choices=['update', 'delete', 'reset', 'add'])
 parser.add_argument('--roster') 
 parser.add_argument('--user') 
+parser.add_argument('--password') 
 args = parser.parse_args()
 
 if args.command[0] == 'delete' or args.command[0] == 'reset' :
@@ -22,10 +24,27 @@ elif args.command[0] == 'update' :
         print ('Error: roster file is required.')
         parser.print_help()
         exit(1)
+elif args.command[0] == 'update' :
+    if args.user is None or args.password is None :
+        print ('Error: user and password are required.')
+        parser.print_help()
+        exit(1) 
         
 iam = boto3.client('iam')
-c9 = boto3.client('cloud9', region_name='us-west-2')
+c9_1 = boto3.client('cloud9', region_name='us-west-2')
+c9_2 = boto3.client('cloud9', region_name='us-east-2')
 
+def get_c9(username) :
+    global c9_1, c9_2
+    h = hashlib.sha1()
+    h.update(username.encode('utf-8'))
+    d = h.digest()
+    i = int.from_bytes(d, byteorder='little', signed=True)
+    if i < 0 :
+        return c9_1
+    else:
+        return c9_2
+    
 def main() :
     global iam, args
 
@@ -55,7 +74,7 @@ def main() :
         answer = input('Really RESET user {} ALL DATA WILL BE LOST? [y,N]: '.format(args.user))
         if answer == 'y' or answer == 'Y' :
             user = iam.get_user(UserName=args.user)
-            delete_cloud9(user['User']['Arn'])
+            delete_cloud9(args.user, user['User']['Arn'])
             create_cloud9(args.user, user['User']['Arn'])
         else:
             print ('Exit with no change. Safe.')
@@ -72,6 +91,14 @@ def main() :
         else:
             delete_user(args.user)
 
+    elif args.command[0] == 'add' :
+        add_user(args.user, args.password)
+        
+    else:
+        print ('Error: unrecognized command.')
+        parser.print_help()
+        exit(1)
+        
 def extract_name( student ) :
     rval = dict()
     n = student['name'];
@@ -93,8 +120,9 @@ def gen_login(class_name, student) :
     rval['password'] = rval['given'][0:2] + rval['family'][0:2] + student['id'][-4:]
     return rval
 
-def delete_cloud9(user_arn) :
+def delete_cloud9(username, user_arn) :
     # Find any C9 instances.
+    c9 = get_c9(username)
     envs = c9.list_environments()
     env_desc = c9.describe_environments(environmentIds=envs['environmentIds'])
 
@@ -104,12 +132,14 @@ def delete_cloud9(user_arn) :
             c9.delete_environment(environmentId=env['id'])
 
 def delete_user(username):
-    global iam, c9
+    global iam
 
+    c9 = get_c9(username)
+    
     # Check if the user exists.
     user = iam.get_user(UserName=username);
 
-    delete_cloud9(user['User']['Arn'])
+    delete_cloud9(username, user['User']['Arn'])
     
     print ('Deleting user {}'.format(user['User']['Arn']))
     iam.remove_user_from_group(UserName=username, GroupName='cis-15')
@@ -117,6 +147,7 @@ def delete_user(username):
     iam.delete_user(UserName=username)
 
 def create_cloud9(username, user_arn) :
+    c9 = get_c9(username)
     while True :
         try :        
             resp = c9.create_environment_ec2(name=username,
@@ -135,8 +166,10 @@ def create_cloud9(username, user_arn) :
                                      permissions='read-write') 
 
 def add_user(username, password):
-    global iam, c9
+    global iam
 
+    c9 = get_c9(username)
+    
     print ('Adding user', username) 
     iam.create_user(UserName=username, Path='/student/')
     iam.create_login_profile(UserName=username, Password=password)
