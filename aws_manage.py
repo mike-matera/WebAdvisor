@@ -74,7 +74,10 @@ def main() :
         answer = input('Really RESET user {} ALL DATA WILL BE LOST? [y,N]: '.format(args.user))
         if answer == 'y' or answer == 'Y' :
             user = iam.get_user(UserName=args.user)
-            delete_cloud9(args.user, user['User']['Arn'])
+            try: 
+                delete_cloud9(args.user, user['User']['Arn'])
+            except:
+                print ("Warning: Couldn't delete this users workspace.")
             create_cloud9(args.user, user['User']['Arn'])
         else:
             print ('Exit with no change. Safe.')
