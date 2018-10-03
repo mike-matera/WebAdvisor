@@ -8,10 +8,11 @@ import argparse
 import hashlib
 
 parser = argparse.ArgumentParser()
-parser.add_argument('command', nargs=1, choices=['update', 'delete', 'reset', 'add'])
+parser.add_argument('command', nargs=1, choices=['update', 'delete', 'reset', 'add', 'resize'])
 parser.add_argument('--roster') 
 parser.add_argument('--user') 
 parser.add_argument('--password') 
+parser.add_argument('--type') 
 args = parser.parse_args()
 
 if args.command[0] == 'delete' or args.command[0] == 'reset' :
@@ -29,10 +30,17 @@ elif args.command[0] == 'update' :
         print ('Error: user and password are required.')
         parser.print_help()
         exit(1) 
-        
+elif args.command[0] == 'resize' :
+    if args.type is None:
+        print ('Error: instance type is required.')
+        parser.print_help()
+        exit(1) 
+    
 iam = boto3.client('iam')
 c9_1 = boto3.client('cloud9', region_name='us-west-2')
 c9_2 = boto3.client('cloud9', region_name='us-east-2')
+ec2_1 = boto3.client('ec2', region_name='us-west-2')
+ec2_2 = boto3.client('ec2', region_name='us-east-2')
 
 def get_c9(username) :
     global c9_1, c9_2
@@ -44,64 +52,18 @@ def get_c9(username) :
         return c9_1
     else:
         return c9_2
-    
-def main() :
-    global iam, args
 
-    if args.command[0] == 'update' : 
-        with open(args.roster) as r :
-            rosters = json.loads(r.read())
-
-        roster_users = {}
-        for user in rosters['cis15s18'] :
-            login = gen_login('cis15', user)
-            roster_users[login['login']] = login
-
-        aws_users = iam.list_users(PathPrefix='/student/')
-
-        roster_usernames = set(roster_users.keys())
-        aws_usernames = set([ x['UserName'] for x in aws_users['Users'] ])
-
-        to_add = roster_usernames - aws_usernames
-        for user in to_add :
-            add_user(user, roster_users[user]['password'])
-
-        to_del = aws_usernames - roster_usernames
-        for user in to_del :
-            delete_user(user) 
-
-    elif args.command[0] == 'reset' :
-        answer = input('Really RESET user {} ALL DATA WILL BE LOST? [y,N]: '.format(args.user))
-        if answer == 'y' or answer == 'Y' :
-            user = iam.get_user(UserName=args.user)
-            try: 
-                delete_cloud9(args.user, user['User']['Arn'])
-            except:
-                print ("Warning: Couldn't delete this users workspace.")
-            create_cloud9(args.user, user['User']['Arn'])
-        else:
-            print ('Exit with no change. Safe.')
-            
-    elif args.command[0] == 'delete' :
-        if args.user == 'all' :
-            answer = input('Really DELETE ALL USERS? [y,N]: ')
-            if answer == 'y' or answer == 'Y' :
-                aws_users = iam.list_users(PathPrefix='/student/')
-                for username in [ x['UserName'] for x in aws_users['Users'] ] :
-                    delete_user(username)
-            else:
-                print ('Exit with no change. Safe.')
-        else:
-            delete_user(args.user)
-
-    elif args.command[0] == 'add' :
-        add_user(args.user, args.password)
-        
+def get_ec2(username) :
+    global ec2_1, ec2_2
+    h = hashlib.sha1()
+    h.update(username.encode('utf-8'))
+    d = h.digest()
+    i = int.from_bytes(d, byteorder='little', signed=True)
+    if i < 0 :
+        return ec2_1
     else:
-        print ('Error: unrecognized command.')
-        parser.print_help()
-        exit(1)
-        
+        return ec2_2
+
 def extract_name( student ) :
     rval = dict()
     n = student['name'];
@@ -183,7 +145,91 @@ def add_user(username, password):
     w.wait(UserName=username)
 
     create_cloud9(username, user.arn) 
+
+def resize_instance(client, instance_id, new_type):
+    print ('Modifying EC2 type of {}'.format(instance_id))
+    print ('  Stopping instance.')
+    client.stop_instances(InstanceIds=[instance_id])
+    waiter = client.get_waiter('instance_stopped')
+    waiter.wait(InstanceIds=[instance_id])
+    print ('  Modifying instance.')
+    client.modify_instance_attribute(InstanceId=instance_id, Attribute='instanceType', Value=new_type)
     
+def resize_all(new_type):
+    global ec2_1, ec2_2 
+
+    instances = ec2_1.describe_instances()
+    for res in instances['Reservations']:
+        for instance in res['Instances']: 
+            resize_instance(ec2_1, instance['InstanceId'], new_type)
+        
+    instances = ec2_2.describe_instances()
+    for res in instances['Reservations']:
+        for instance in res['Instances']: 
+            resize_instance(ec2_2, instance['InstanceId'], new_type)
+
+
+def main() :
+    global iam, args
+
+    if args.command[0] == 'update' : 
+        with open(args.roster) as r :
+            rosters = json.loads(r.read())
+
+        roster_users = {}
+        for user in rosters['cis15s18'] :
+            login = gen_login('cis15', user)
+            roster_users[login['login']] = login
+
+        aws_users = iam.list_users(PathPrefix='/student/')
+
+        roster_usernames = set(roster_users.keys())
+        aws_usernames = set([ x['UserName'] for x in aws_users['Users'] ])
+
+        to_add = roster_usernames - aws_usernames
+        for user in to_add :
+            add_user(user, roster_users[user]['password'])
+
+        to_del = aws_usernames - roster_usernames
+        for user in to_del :
+            delete_user(user) 
+
+    elif args.command[0] == 'reset' :
+        answer = input('Really RESET user {} ALL DATA WILL BE LOST? [y,N]: '.format(args.user))
+        if answer == 'y' or answer == 'Y' :
+            user = iam.get_user(UserName=args.user)
+            try: 
+                delete_cloud9(args.user, user['User']['Arn'])
+            except:
+                print ("Warning: Couldn't delete this users workspace.")
+            create_cloud9(args.user, user['User']['Arn'])
+        else:
+            print ('Exit with no change. Safe.')
+            
+    elif args.command[0] == 'delete' :
+        if args.user == 'all' :
+            answer = input('Really DELETE ALL USERS? [y,N]: ')
+            if answer == 'y' or answer == 'Y' :
+                aws_users = iam.list_users(PathPrefix='/student/')
+                for username in [ x['UserName'] for x in aws_users['Users'] ] :
+                    delete_user(username)
+            else:
+                print ('Exit with no change. Safe.')
+        else:
+            delete_user(args.user)
+
+    elif args.command[0] == 'add' :
+        add_user(args.user, args.password)
+        
+    elif args.command[0] == 'resize' :
+        resize_all(args.type)
+    
+    else:
+        print ('Error: unrecognized command.')
+        parser.print_help()
+        exit(1)
+        
+
 if __name__ == '__main__' :
     main()
 
