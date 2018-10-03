@@ -75,6 +75,10 @@ def extract_name( student ) :
     else:
         rval['given'] = n[comma+2:]
 
+    # Trim out spaces. The "Jo Ann" problem. 
+    rval['given'] = re.sub(r'\s+', r'', rval['given'])
+    rval['family'] = re.sub(r'\s+', r'', rval['family'])
+
     return rval
 
 def gen_login(class_name, student) :
@@ -177,7 +181,7 @@ def main() :
             rosters = json.loads(r.read())
 
         roster_users = {}
-        for user in rosters['cis15s18'] :
+        for user in rosters['cis15f18'] :
             login = gen_login('cis15', user)
             roster_users[login['login']] = login
 
