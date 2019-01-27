@@ -13,6 +13,7 @@ parser.add_argument('--roster')
 parser.add_argument('--user') 
 parser.add_argument('--password') 
 parser.add_argument('--type') 
+parser.add_argument('--groups') 
 args = parser.parse_args()
 
 if args.command[0] == 'delete' or args.command[0] == 'reset' :
@@ -42,7 +43,21 @@ c9_2 = boto3.client('cloud9', region_name='us-east-2')
 ec2_1 = boto3.client('ec2', region_name='us-west-2')
 ec2_2 = boto3.client('ec2', region_name='us-east-2')
 
-def get_c9(username) :
+
+def get_c9(username):
+    # Limits raised in Oregon!
+    return c9_1
+
+
+def name_get_c9(username):
+    global c9_1, c9_2
+    if username[0] < 'q':
+        return c9_1
+    else:
+        return c9_2
+
+    
+def hash_get_c9(username) :
     global c9_1, c9_2
     h = hashlib.sha1()
     h.update(username.encode('utf-8'))
@@ -53,17 +68,7 @@ def get_c9(username) :
     else:
         return c9_2
 
-def get_ec2(username) :
-    global ec2_1, ec2_2
-    h = hashlib.sha1()
-    h.update(username.encode('utf-8'))
-    d = h.digest()
-    i = int.from_bytes(d, byteorder='little', signed=True)
-    if i < 0 :
-        return ec2_1
-    else:
-        return ec2_2
-
+    
 def extract_name( student ) :
     rval = dict()
     n = student['name'];
@@ -85,6 +90,7 @@ def gen_login(class_name, student) :
     rval = extract_name(student)
     m = re.search('^(cs|cis)(\d+).*$', class_name)
     classnumber = m.group(2)
+    rval['groups'] = [m.group(1) + '-' + classnumber]
     rval['login'] = rval['family'][0:3].lower() + rval['given'][0:3].lower() + classnumber
     rval['password'] = rval['given'][0:2] + rval['family'][0:2] + student['id'][-4:]
     return rval
@@ -111,8 +117,17 @@ def delete_user(username):
     delete_cloud9(username, user['User']['Arn'])
     
     print ('Deleting user {}'.format(user['User']['Arn']))
-    iam.remove_user_from_group(UserName=username, GroupName='cis-15')
-    iam.delete_login_profile(UserName=username)
+    groups = iam.list_groups_for_user(UserName=username)
+    print ('fuu:', groups)
+    for group in groups['Groups']:
+        print ('duu:', group)
+        iam.remove_user_from_group(UserName=username, GroupName=group['GroupName'])
+
+    try:
+        iam.delete_login_profile(UserName=username)
+    except Exception as e:
+        print (e)
+        
     iam.delete_user(UserName=username)
 
 def create_cloud9(username, user_arn) :
@@ -134,19 +149,20 @@ def create_cloud9(username, user_arn) :
                                      userArn='arn:aws:iam::957903271915:user/matera',
                                      permissions='read-write') 
 
-def add_user(username, password):
+def add_user(username, password, groups=[]):
     global iam
 
     c9 = get_c9(username)
     
     print ('Adding user', username) 
     iam.create_user(UserName=username, Path='/student/')
-    iam.create_login_profile(UserName=username, Password=password)
-    iam.add_user_to_group(GroupName='cis-15', UserName=username)
-    user = boto3.resource('iam').User(username)
-
     w = iam.get_waiter('user_exists')
     w.wait(UserName=username)
+
+    iam.create_login_profile(UserName=username, Password=password)
+    for group in groups:
+        iam.add_user_to_group(GroupName=group, UserName=username)
+    user = boto3.resource('iam').User(username)
 
     create_cloud9(username, user.arn) 
 
@@ -181,8 +197,12 @@ def main() :
             rosters = json.loads(r.read())
 
         roster_users = {}
-        for user in rosters['cis15f18'] :
+        for user in rosters['cis15s18'] :
             login = gen_login('cis15', user)
+            roster_users[login['login']] = login
+
+        for user in rosters['cis54s18'] :
+            login = gen_login('cis54', user)
             roster_users[login['login']] = login
 
         aws_users = iam.list_users(PathPrefix='/student/')
@@ -192,7 +212,7 @@ def main() :
 
         to_add = roster_usernames - aws_usernames
         for user in to_add :
-            add_user(user, roster_users[user]['password'])
+            add_user(user, roster_users[user]['password'], roster_users[user]['groups'])
 
         to_del = aws_usernames - roster_usernames
         for user in to_del :
@@ -223,7 +243,7 @@ def main() :
             delete_user(args.user)
 
     elif args.command[0] == 'add' :
-        add_user(args.user, args.password)
+        add_user(args.user, args.password, args.groups.split(','))
         
     elif args.command[0] == 'resize' :
         resize_all(args.type)
