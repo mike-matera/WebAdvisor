@@ -135,8 +135,8 @@ def create_cloud9(username, user_arn) :
     while True :
         try :        
             resp = c9.create_environment_ec2(name=username,
-                                             description='Your cis-15 workspace',
-                                             instanceType='t2.nano',
+                                             description='Your workspace',
+                                             instanceType='t2.micro',
                                              automaticStopTimeMinutes=30,
                                              ownerArn=user_arn)
             print ('Created a Cloud9 console for', user_arn)
@@ -197,11 +197,11 @@ def main() :
             rosters = json.loads(r.read())
 
         roster_users = {}
-        for user in rosters['cis15s18'] :
+        for user in rosters['cis15f18'] :
             login = gen_login('cis15', user)
             roster_users[login['login']] = login
 
-        for user in rosters['cis54s18'] :
+        for user in rosters['cis54f18'] :
             login = gen_login('cis54', user)
             roster_users[login['login']] = login
 
